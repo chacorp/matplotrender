@@ -6,6 +6,7 @@ Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 # Requirements
 ```
 pip install -r requirements.txt
+pip install .
 ```
 
 

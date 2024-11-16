@@ -4,6 +4,8 @@ import trimesh
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.tri as tri
+import matplotlib.colors as matclrs
 from matplotlib.collections import PolyCollection
 from matplotlib.animation import FuncAnimation
 from functools import partial
@@ -75,6 +77,19 @@ def xrotate(theta):
                       [ 0, s, c, 0],
                       [ 0, 0, 0, 1]], dtype=float)
 
+def get_rotation_matrix(rotations):
+    """
+    Args:
+        rotations: List[float, float, float]
+            list of x, y, z rotations in euler angle
+    Returns:
+        matrix : np.ndarray
+            4x4 rotation matrix
+    """
+    xrot, yrot, zrot = rotations
+    matrix = yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
+    return matrix
+
 def transform_vertices(frame_v, MVP, F, norm=True, no_parsing=False):
     V = frame_v
     if norm:
@@ -121,39 +136,111 @@ def calc_face_norm(vertices, faces, mode='faces'):
     # Normalize the vertex normals
     norm_v = vertex_normals / (np.linalg.norm(vertex_normals, axis=1)[:, np.newaxis] + 1e-12)
     return norm_v
+
+def colors_to_cmap(colors):
+    '''
+    colors_to_cmap(nx3_or_nx4_rgba_array) yields a matplotlib colormap object that, when
+    that will reproduce the colors in the given array when passed a list of n evenly
+    spaced numbers between 0 and 1 (inclusive), where n is the length of the argument.
+
+    Example:
+      cmap = colors_to_cmap(colors)
+      zs = np.asarray(range(len(colors)), dtype=np.float) / (len(colors)-1)
+      # cmap(zs) should reproduce colors; cmap[zs[i]] == colors[i]
+    '''
+    colors = np.asarray(colors)
+    if colors.shape[1] == 3:
+        colors = np.hstack((colors, np.ones((len(colors),1))))
+    steps = (0.5 + np.asarray(range(len(colors)-1), dtype=np.float))/(len(colors) - 1)
+    return matclrs.LinearSegmentedColormap(
+        'auto_cmap',
+        {clrname: ([(0, col[0], col[0])] + 
+                   [(step, c0, c1) for (step,c0,c1) in zip(steps, col[:-1], col[1:])] + 
+                   [(1, col[-1], col[-1])])
+         for (clridx,clrname) in enumerate(['red', 'green', 'blue', 'alpha'])
+         for col in [colors[:,clridx]]},
+        N=len(colors)
+    )
+
+def get_new_mesh(vertices, faces, v_idx, invert=False):
+    """Calculate standardized mesh
+    Args
+    ------
+        vertices (np.ndarray): [V, 3] array of vertices 
+        faces (np.ndarray): [F, 3] array of face indices 
+        v_idx (np.ndarray): [N] list of vertex index to remove from mesh
+    Return
+    ------
+        updated_verts (np.ndarray): [V, 3] new array of vertices 
+        updated_faces (np.ndarray): [F, 3] new array of face indices  
+        updated_verts_idx (np.ndarray): [N] list of vertex index to remove from mesh (fixed)
+    """
+    max_index = vertices.shape[0]
+    new_vertex_indices = np.arange(max_index)
+
+    if invert:
+        mask = np.zeros(max_index, dtype=bool)
+        mask[v_idx] = True
+    else:
+        mask = np.ones(max_index, dtype=bool)
+        mask[v_idx] = False
+
+    updated_verts = vertices[mask]
+    updated_verts_idx = new_vertex_indices[mask]
+
+    index_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(updated_verts_idx)}
+
+    updated_faces = np.array([
+                    [index_mapping.get(idx, -1) for idx in face]
+                    for face in faces
+                ])
+
+    valid_faces = ~np.any(updated_faces == -1, axis=1)
+    updated_faces = updated_faces[valid_faces]
     
-def plot_image_array(
-        Vs,
+    return updated_verts, updated_faces, updated_verts_idx
+
+def plot_mesh_image(
+        Vs, 
         Fs, 
         rot_list=None, 
         size=6, 
         norm=False, 
-        view_mode='p',
-        mode='mesh', 
+        mode='mesh',
+        z_pos=-5, 
+        custom_perspective=None,
         linewidth=1, 
         linestyle='solid', 
         light_dir=np.array([0,0,1]),
-        bg_black = True,
-        logdir='.', 
+        bg_black=False,
+        savedir='.', 
         name='000', 
-        save=False
-        ):
-    r"""
+        save=False,
+    ):
+    """
     Args:
         Vs (list): list of vertices [V, V, V, ...]
         Fs (list): list of face indices [F, F, F, ...]
         rot_list (list): list of euler angle [ [x,y,z], [x,y,z], ...]
         size (int): size of figure
         norm (bool): if True, normalize vertices
-        view_mode (str): if 'p' use perspective, if 'o' use orthogonal camera
         mode (str): mode for rendering [mesh(wireframe), shade, normal]
+        z_pos (float): z distance of the mesh 
+        custom_perspective (ortho() / perspective() ): if specified, use it to render perspective
         linewidth (float): line width for wireframe (kwargs for matplotlib)
         linestyle (str): line style for wireframe (kwargs for matplotlib)
         light_dir (np.array): light direction
         bg_black (bool): if True, use dark_background for plt.style
-        logdir (str): directory for saved image
+        savedir (str): directory for saved image
         name (str): name for saved image
         save (bool): if True, save the plot as image
+
+    >>>
+    v_list = [ mesh1.v ]
+    f_list = [ mesh1.f ]
+    rot_list = [[0,60,0]] # rotates 60 degree on y axis
+
+    plot_mesh_image(v_list, f_list, rot_list)
     """
     if mode=='gouraud':
         print("currently WIP!: need to curl by z")
@@ -171,19 +258,19 @@ def plot_image_array(
         ax_pos = [idx / num_meshes, 0, 1 / num_meshes, 1]
         ax = fig.add_axes(ax_pos, xlim=[-1, +1], ylim=[-1, +1], aspect=1, frameon=False)
 
-        #xrot, yrot, zrot = rot[0], 90, rot[2]
         if rot_list:
-            xrot, yrot, zrot = rot_list[idx]
+            rot_mat = get_rotation_matrix(rot_list[idx])
         else:
-            xrot, yrot, zrot = 0,0,0
+            rot_mat = get_rotation_matrix([0, 0, 0])
+
         ## MVP
-        model = translate(0, 0, -4) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
-        if view_mode=='p':
-            proj  = perspective(55, 1, 1, 100)
+        model = translate(0, 0, z_pos) @ rot_mat
+        if custom_perspective is None:    
+            # proj = perspective(55, 1, 1, 100)
+            proj = ortho(-1, 1, -1, 1, 1, 100)
         else:
-            proj  = ortho(-1, 1, -1, 1, 1, 100) # Use ortho instead of perspective
-            
-        MVP   = proj @ model # view is identity
+            proj = custom_perspective
+        MVP = proj @ model # view is identity
         
         # quad to triangle    
         VF_tri = transform_vertices(V, MVP, F, norm)
@@ -194,7 +281,7 @@ def plot_image_array(
         Z = (Z - zmin) / (zmax - zmin)
 
         if mode=='normal':
-            C = calc_face_norm(V[F]) @ model[:3,:3].T
+            C = calc_face_norm(V, F) @ model[:3,:3].T
             
             I = np.argsort(Z)
             T, C = T[I, :], C[I, :]
@@ -204,7 +291,7 @@ def plot_image_array(
             C = np.clip(C, 0, 1) if False else C * 0.5 + 0.5
             collection = PolyCollection(T, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C)
         elif mode=='shade':
-            C = calc_face_norm(V[F]) @ model[:3,:3].T
+            C = calc_face_norm(V, F) @ model[:3,:3].T
             
             I = np.argsort(Z)
             T, C = T[I, :], C[I, :]
@@ -214,18 +301,18 @@ def plot_image_array(
             
             C = (C @ light_dir)[:,np.newaxis].repeat(3, axis=-1)
             C = np.clip(C, 0, 1)
-            C = C*0.5+0.25
+            C = C*0.7+0.2
             collection = PolyCollection(T, closed=False, linewidth=linewidth,facecolor=C, edgecolor=C)
         elif mode=='gouraud':
             # I = np.argsort(Z)
             # V, F, vidx = get_new_mesh(V, F, I, invert=True)
             
             ### curling by normal
-            C = calc_norm(V, F, mode='v') #@ model[:3,:3].T
+            C = calc_face_norm(V, F, mode='v') #@ model[:3,:3].T
             NI = np.argwhere(C[:,2] > 0.0).squeeze()
             V, F, vidx = get_new_mesh(V, F, NI, invert=True)
             
-            C = calc_norm(V, F,mode='v') #@ model[:3,:3].T
+            C = calc_face_norm(V, F,mode='v') #@ model[:3,:3].T
             
             #VV = (V-V.min()) / (V.max()-V.min())# world coordinate
             V = transform_vertices(V, MVP, F, norm, no_parsing=True)
@@ -238,13 +325,11 @@ def plot_image_array(
             #cmap = colors_to_cmap(VV)
             cmap = colors_to_cmap(C)
             zs = np.linspace(0.0, 1.0, num=V.shape[0])
-            plt.tripcolor(triangle_, zs, cmap=cmap, shading='gouraud')
-            
+            plt.tripcolor(triangle_, zs, cmap=cmap, shading='gouraud')           
         else:
             C = plt.get_cmap("gray")(Z)
             I = np.argsort(Z)
             T, C = T[I, :], C[I, :]
-            
             collection = PolyCollection(T, closed=False, linewidth=0.23, facecolor=C, edgecolor='black')
             
         if mode!='gouraud':
@@ -253,7 +338,7 @@ def plot_image_array(
         plt.yticks([])
     
     if save:
-        plt.savefig('{}/{}.png'.format(logdir, name), bbox_inches = 'tight')
+        plt.savefig('{}/{}.png'.format(savedir, name), bbox_inches = 'tight')
         plt.close()
     else:
         plt.show()
@@ -321,9 +406,12 @@ def update_frame_diff(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_
     V = D[frame_idx]
     F = Fs[0]
     
-    xrot, yrot, zrot = rot_list[frame_idx] if rot_list is not None else (0, 0, 0)
+    if rot_list:
+        rot_mat = get_rotation_matrix(rot_list[frame_idx])
+    else:
+        rot_mat = get_rotation_matrix([0, 0, 0])
     
-    model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
+    model = translate(0, 0, -5) @ rot_mat
     # proj  = perspective(65, 1, 1, 10)
     proj = ortho(-1, 1, -1, 1, 1, 100)
     MVP = proj @ model
@@ -335,7 +423,6 @@ def update_frame_diff(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_
     axes[0].set_title(f'Frame {frame_idx + 1:03d} * 1e-2', fontsize=6)
     axes[0].axis('off')
     
-    #D_diff = np.array([abs(np.array(D[frame_idx]) - np.array(vs[frame_idx])) for vs in Vs])[:, F]
     D_diff = np.array(abs(np.array(D[frame_idx]) - np.array(Vs[:, frame_idx])))[:, F]
     D_diff = np.linalg.norm(D_diff, axis=-1)
     D_diff = np.linalg.norm(D_diff, axis=-1)
@@ -352,85 +439,115 @@ def update_frame_diff(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_
         T, C = process_mesh(V[frame_idx], F, MVP, norm, model, light_dir, linewidth, c_map, diff)
         collection = PolyCollection(T, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C)
         axes[idx + 1].add_collection(collection)
-#         axes[idx + 1].set_xlabel(f'Frame {frame_idx + 1} | min:{D_diff.min():.5f} | max: {D_diff.max():.5f}')
+        # axes[idx + 1].set_xlabel(f'Frame {frame_idx + 1} | min:{D_diff.min():.5f} | max: {D_diff.max():.5f}')
         axes[idx + 1].set_title(f'min:{D_diff[idx].min()*100:.3f} | max: {D_diff[idx].max()*100:.3f}', fontsize=6)
         axes[idx + 1].axis('off')
         #plt.xlabel(f'Frame {frame_idx + 1} | min:{D_diff.min():.5f} | max: {D_diff.max():.5f}')
     # Add the text to the figure
     #fig.text(0.5, 0.01, f'min: {diff_min:.4f} | max: {diff_max:.4f}', ha='center', fontsize=12, transform=fig.transFigure)
 
-def render_mesh_diff(
+def update_frame(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list):
+    for ax in axes:
+        ax.clear()
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_aspect('equal')
+        ax.axis('off')
+    
+    F = Fs[0]
+    
+    if rot_list:
+        rot_mat = get_rotation_matrix(rot_list[frame_idx])
+    else:
+        rot_mat = get_rotation_matrix([0, 0, 0])
+    
+    model = translate(0, 0, -5) @ rot_mat
+    proj = ortho(-1, 1, -1, 1, 1, 100)
+    MVP = proj @ model
+    
+    for idx, V in enumerate(Vs):
+        T, C = process_mesh(V[frame_idx], F, MVP, norm, model, light_dir, linewidth, c_map)
+        collection = PolyCollection(T, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C)
+        axes[idx].add_collection(collection)
+        axes[idx].set_title(f'Frame {frame_idx + 1:03d} * 1e-2', fontsize=6)
+        axes[idx].axis('off')
+
+def plot_mesh_video(
         Vs, 
         Fs, 
-        D, 
+        D=None,
         rot_list=None,
         size:int=6,
         norm:bool=False,
         linewidth:float=1,
         light_dir=np.array([0,0,1]),
-        bg_black:bool=True,
+        bg_black:bool=False,
         threshold:float=None,
         c_map:str='YlOrRd', 
         fps:int=30,
-        savedir:Optional[str]=None, 
-        savename:Optional[str]="temp",
+        savedir:Optional[str]='tmp', 
+        savename:Optional[str]="test",
         audio_dir:Optional[str]=None,
+        debug=False,
     ):
     """
-    >>>
-    v_list=[ pred_outputs[:frame_num], vertices.numpy()[:frame_num] ]
-    f_list=[ ict_full.faces ]
-    d_list=[ vertices.numpy()[:frame_num] ]
+    render a video with a case of:
+        vert_sequence_a: (T, V, 3)
+        vert_sequence_b: (T, V, 3)
+        faces: (F, 3)
+        vertices: (V, 3)
+    >>> 
+    v_list=[ vert_sequence_a, vert_sequence_b ]
+    f_list=[ faces ]
+    d_list=[ vertices ]
     render_mesh_diff(
         v_list, 
         f_list, 
         d_list[0],
-        size=2, bg_black=False,
-        savedir='_tmp',
-        savename="temp",
+        size=2,
     )
     """
-    num_frames = len(D)
-    num_meshes = len(Vs) + 1
+    num_frames = len(Vs[0])
+    num_meshes = len(Vs) if D is None else len(Vs) + 1
     fig, axes = setup_plot(bg_black, size, num_meshes)
     Vs = np.array(Vs)
+    # if debug:
+    #     print(len(Vs))
     
     plt.tight_layout()
     #fig.subplots_adjust(top=0.95)  # Adjust the top margin to ensure titles are not cut off
     anim = FuncAnimation(
         fig, 
-        update_frame_diff, 
+        update_frame_diff if D is not None else update_frame, 
         frames=num_frames, 
         fargs=(Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list),
         repeat=False
     )
     
-    if savedir is None:
-        plt.show()
-    else:
-        if audio_dir is None:
-            anim_name = f'{savedir}/{savename}.mp4'
-        else:
-            anim_name = f'{savedir}/_tmp_.mp4'
-        bar = tqdm(total=num_frames, desc="rendering")
-        anim.save(
-            anim_name, 
-            fps=fps,
-            progress_callback=lambda i, n: bar.update(1)
-        )
-            
+    # save path
+    os.makedirs(savedir, exist_ok=True)
+    
+    anim_name = f'{savedir}/{savename}.mp4'
+
+    bar = tqdm(total=num_frames, desc="rendering")
+    anim.save(
+        anim_name if audio_dir is None else 'tmp.mp4', 
+        fps=fps,
+        progress_callback=lambda i, n: bar.update(1)
+    )
     plt.close()
     
     if audio_dir is not None:
         # mux audio and video
         print("[INFO] mux audio and video")
-        cmd = f"ffmpeg -y -i {audio_dir} -i {savedir}/_tmp_.mp4 -c:v copy -c:a aac {savedir}/{savename}.mp4"
+        cmd = f"ffmpeg -y -i {audio_dir} -i tmp.mp4 -c:v copy -c:a aac {anim_name}"
         subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print(f"saved as: {savedir}/{savename}.mp4")
-
+        
         # remove tmp files
-        subprocess.call(f"rm -f {savedir}/_tmp_.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    
+        subprocess.call(f"rm -f tmp.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+    print(f"saved as: {anim_name}")
+
 def compute_average_distance(points):
     """
     Compute the average distance of each point from the origin in a set of points.
