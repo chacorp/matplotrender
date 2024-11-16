@@ -500,7 +500,7 @@ def plot_mesh_video(
     v_list=[ vert_sequence_a, vert_sequence_b ]
     f_list=[ faces ]
     d_list=[ vertices ]
-    render_mesh_diff(
+    plot_mesh_video(
         v_list, 
         f_list, 
         d_list[0],
