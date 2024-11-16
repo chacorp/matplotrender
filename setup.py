@@ -1,11 +1,3 @@
-"""
-setup.py
-----
-This is the main setup file for the hallo face animation project. It defines the package
-metadata, required dependencies, and provides the entry point for installing the package.
-
-"""
-
 # -*- coding: utf-8 -*-
 from setuptools import setup
 
@@ -19,16 +11,21 @@ install_requires = [
 setup_kwargs = {
     'name': 'matplotrender',
     'version': '0.1.0',
-    'description': '',
-    'long_description': 'render with matplotlib',
-    'author': 'Your Name',
-    'author_email': 'you@example.com',
+    'description': 'render 3d mesh using matplotlib',
+    'long_description': 'render image and video with 3d mesh using matplotlib',
+    'author': 'Sihun Cha',
+    'author_email': 'sihun.cha@gmail.com',
     'maintainer': 'None',
     'maintainer_email': 'None',
-    'url': 'None',
+    'url': 'https://github.com/chacorp/matplotrender',
     'package_dir':{"": "src"},
     'install_requires': install_requires,
     'python_requires': '>=3.8,<4.0',
+    'classifiers': [
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
 }
 
 
