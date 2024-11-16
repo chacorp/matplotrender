@@ -6,6 +6,14 @@ I made this just for fun, so the code is a bit messy and there are things that s
 Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 
 
+## TODOs
+- Image
+    - [x] curling based on normal
+    - [ ] gouraud rendering with `matplotlib.tri`
+- Animation
+    - [ ] add slider feature to tour around the animation frames
+    - [ ] add feature for comparing difference between two animation
+
 # Requirements
 ```
 pip install -r requirements.txt
