@@ -621,3 +621,83 @@ def procrustes_analysis(P, Q):
     t = -R @ (centroid_P * s) + centroid_Q
 
     return R, t, s
+
+def plot_image_array_diff3(
+    Vs, 
+    Fs, 
+    D, 
+    rot=(0, 0, 0), 
+    size=6, 
+    norm=False, 
+    linewidth=1, 
+    linestyle='solid', 
+    light_dir=np.array([0,0,1]), 
+    bg_black=True, 
+    threshold=None, 
+    logdir='.', 
+    name='000', 
+    save=False, 
+    draw_base=True, 
+    c_map='YlOrRd'
+    ):
+    """
+    WIP ...
+    v_list = [vertices] # (V, 3)
+    f_list = [faces] # (F, 3)
+    v0 = vertices # (V, 3)
+    plot_image_array_diff3(
+        v_list, 
+        f_list, 
+        v0,
+        rot=[0,-10,0],
+        bg_black=False,
+    )
+    """
+    num_meshes = len(Vs) + 1
+    fig, axes = setup_plot(bg_black, size, num_meshes)
+    
+    xrot, yrot, zrot = rot if rot is not None else (0, 0, 0)
+    
+    model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
+    proj = ortho(-1, 1, -1, 1, 1, 100)
+    # proj  = perspective(65, 1, 1, 10)
+    MVP = proj @ model
+
+    if draw_base:
+        T, C = process_mesh(D, Fs[0], MVP, norm, model, light_dir, linewidth, c_map)
+        collection = PolyCollection(T, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C)
+        axes[0].add_collection(collection)
+        axes[0].axis('off')
+        
+    D_diff = np.array(abs(D - np.array(Vs)))[:, Fs[0]]
+    D_diff = np.linalg.norm(D_diff, axis=-1)
+    D_diff = np.linalg.norm(D_diff, axis=-1)
+    
+    if threshold is not None:
+        D_diff[D_diff > threshold] = threshold
+    diff_min, diff_max = D_diff.min(), D_diff.max()
+    
+    norm_color = plt.Normalize(vmin=0, vmax=diff_max)
+    sm = plt.cm.ScalarMappable(cmap=c_map, norm=norm_color)
+    sm.set_array([])
+
+    for idx, (V, F) in enumerate(zip(Vs, Fs)):
+        diff = D_diff[idx]
+        if diff_max > 0:
+            diff = (diff - diff_min) / (diff_max - diff_min)
+        
+        T, C = process_mesh(V, F, MVP, norm, model, light_dir, linewidth, c_map, diff)
+        collection = PolyCollection(T, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C)
+        axes[idx + 1].add_collection(collection)
+        axes[idx + 1].set_title(f'mean: {D_diff[idx].mean():.2e} | std: {D_diff[idx].std():.2e}')
+        axes[idx + 1].axis('off')
+
+    cbar = fig.colorbar(sm, ax=axes, orientation='vertical', fraction=0.006, pad=0.015)
+    cbar.set_label('Mean Squared Error', rotation=90, labelpad=15)
+    
+    if save:
+        plt.savefig(f'{logdir}/{name}.png', bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+        plt.close()
