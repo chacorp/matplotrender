@@ -296,7 +296,7 @@ def plot_mesh_image(
             I = np.argsort(Z)
             T, C = T[I, :], C[I, :]
 
-            NI = np.argwhere(C[:,2] > 0).squeeze()
+            NI = np.argwhere(C[:,2] >= 0).squeeze()
             T, C = T[NI, :], C[NI, :]
             
             C = (C @ light_dir)[:,np.newaxis].repeat(3, axis=-1)
