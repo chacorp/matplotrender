@@ -103,4 +103,5 @@ plot_image_array_diff3(
     bg_black=False,
 )
 ```
+The meshes will be rendered from left to right(mesh0, mesh1, mesh2, mesh3)
 <img src="demo2.png" />
