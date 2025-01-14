@@ -701,3 +701,71 @@ def plot_image_array_diff3(
     else:
         plt.show()
         plt.close()
+
+def render_video_mesh_diff(Vs, Fs, D, 
+                    rot_list=None,
+                    size=6,
+                    norm=False,
+                    linewidth=1,
+                    light_dir=np.array([0,0,1]),
+                    bg_black=True,
+                    threshold=None,
+                    c_map='YlOrRd', 
+                    savedir=None, 
+                    savename="temp",
+                    audio_fn=None,
+                    fps=30
+                    ):
+    """
+    ex):
+    v_list=[ pred_outputs[:frame_num], vertices.numpy()[:frame_num] ]
+    f_list=[ ict_full.faces ]
+    d_list=[ vertices.numpy()[:frame_num] ]
+    render_mesh_diff(
+        v_list, 
+        f_list, 
+        d_list[0],
+        size=2, bg_black=False,
+        savedir='_tmp',
+        savename="temp",
+    )
+    """
+    num_frames = len(D)
+    num_meshes = len(Vs) + 1
+    fig, axes = setup_plot(bg_black, size, num_meshes)
+    Vs = np.array(Vs)
+    
+    plt.tight_layout()
+    #fig.subplots_adjust(top=0.95)  # Adjust the top margin to ensure titles are not cut off
+    anim = FuncAnimation(
+        fig, update_frame, 
+        frames=num_frames, 
+        fargs=(Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list), 
+        repeat=False
+    )
+    
+    if savedir is None:
+        plt.show()
+    else:
+        if audio_fn is None:
+            anim_name = f'{savedir}/{savename}.mp4'
+        else:
+            anim_name = f'{savedir}/_tmp_.mp4'
+        bar = tqdm(total=num_frames, desc="rendering")
+        anim.save(
+            anim_name, 
+            fps=fps,
+            progress_callback=lambda i, n: bar.update(1)
+        )
+            
+    plt.close()
+    
+    if audio_fn is not None:
+        # mux audio and video
+        print("[INFO] mux audio and video")
+        cmd = f"ffmpeg -y -i {audio_fn} -i {savedir}/_tmp_.mp4 -c:v copy -c:a aac {savedir}/{savename}.mp4"
+        subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print(f"saved as: {savedir}/{savename}.mp4")
+
+        # remove tmp files
+        subprocess.call(f"rm -f {savedir}/_tmp_.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
