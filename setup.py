@@ -10,7 +10,7 @@ install_requires = [
 
 setup_kwargs = {
     'name': 'matplotrender',
-    'version': '0.1.0',
+    'version': '0.1.1',
     'description': 'render 3d mesh using matplotlib',
     'long_description': 'render image and video with 3d mesh using matplotlib',
     'author': 'Sihun Cha',

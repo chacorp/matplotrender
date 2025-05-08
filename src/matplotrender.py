@@ -15,6 +15,10 @@ from typing import Callable, List, Optional, Union
 
 import subprocess
 
+from matplotlib.colors import ListedColormap
+from matplotlib.collections import LineCollection
+from matplotlib.cm import get_cmap
+
 """
 Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 """
@@ -47,6 +51,12 @@ def perspective(fovy, aspect, znear, zfar):
     w = h * aspect
     return frustum(-w, w, -h, h, znear, zfar)
 
+def scale(x, y, z):
+    return np.array([[x, 0, 0, 1],
+                     [0, y, 0, 1],
+                     [0, 0, z, 1],
+                     [0, 0, 0, 1]], dtype=float)
+    
 def translate(x, y, z):
     return np.array([[1, 0, 0, x],
                      [0, 1, 0, y],
@@ -769,3 +779,153 @@ def render_video_mesh_diff(Vs, Fs, D,
 
         # remove tmp files
         subprocess.call(f"rm -f {savedir}/_tmp_.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+
+def softmax(x):
+    exp_x = np.exp(x)
+    return exp_x / exp_x.sum(-1)[:,None]
+
+def transform(V, M):
+    V_homo = np.hstack([V, np.ones((V.shape[0], 1))])
+    return (M @ V_homo.T).T[:, :3]
+
+def normalize(V):
+    V = V - V.mean(axis=0)
+    return V / np.max(np.linalg.norm(V, axis=1))
+
+def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False, 
+                         mode='shade', # not used always gouraud shading applied
+                         threshold=0.01,
+                         seg_divide=False,
+                         is_diff=False,
+                         diff_base=None,
+                         diff_revert=False,
+                         backface_culling=False,
+                         depth_sorting=True,
+                         linewidth=1, linestyle='solid', 
+                         light_dir=np.array([0, 0, 1]),
+                         light_at_frontface=True, ## light sticked to the front of the face
+                         view_dir=np.array([0, 0, 1]),
+                         mesh_scale=1.0,
+                         mesh_trans=np.array([0,0,0]),
+                         c_map="nipy_spectral", blend=0.5,
+                         seg_only=-1,
+                         bg_black=True, logdir='.', name='000', save=False, show=True):
+
+    num_meshes = len(Vs)
+    
+    plt.style.use('dark_background' if bg_black else 'default')
+    fig = plt.figure(figsize=(size * num_meshes, size))
+    
+    if is_diff:
+        if diff_base is None:
+            raise ValueError('diff_base is None!')
+            
+    if Cs==None:
+        Cs = [None] * num_meshes
+    
+    # light source data type int -> float
+    light_dir_view = light_dir.astype(float)
+            
+    for idx, (V, F, C) in enumerate(zip(Vs, Fs, Cs)):
+                
+        if norm:
+            V = normalize(V)
+            
+        if is_diff:
+            C = np.linalg.norm(np.square(V-diff_base), axis=-1)
+            if C.max() > 0:
+                C = (C - C.min(0)) / (C.max(0) - C.min(0))
+            C = 1 - C if diff_revert else C
+            print(C.shape, C.max(0), C.min(0))
+            
+        # scale and translate for render
+        V = V * mesh_scale + mesh_trans
+    
+        ax_pos = [idx / num_meshes, 0, 1 / num_meshes, 1]
+        ax = fig.add_axes(ax_pos, xlim=[-1, 1], ylim=[-1, 1], aspect=1, frameon=False)
+
+        xrot, yrot, zrot = rot_list[idx] if rot_list else (0, 0, 0)
+        # very naiiiiiive rotation stacks 
+        model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
+        proj = ortho(-1, 1, -1, 1, 1, 100)
+        MVP = proj @ model
+
+        model_rot = model[:3, :3]
+        model_rot_invT = np.linalg.inv(model_rot).T
+
+        # 정점 normal
+        vertex_normals_obj = calc_face_norm(V, F, mode='v')
+        vertex_normals_view = (model_rot_invT @ vertex_normals_obj.T).T
+        
+        if backface_culling:
+            face_normals_obj = calc_face_norm(V, F)
+            face_normals_view = (model_rot_invT @ face_normals_obj.T).T
+            keep = (face_normals_view @ view_dir) >= 0
+            F = F[keep]
+        
+        # light sticked to front face
+        if light_at_frontface:
+            shading = np.clip(vertex_normals_obj @ light_dir_view, 0, 1)
+        else:
+            shading = np.clip(vertex_normals_view @ light_dir_view, 0, 1)
+        
+        ## projection!
+        V_proj = transform(V, MVP)
+
+        # depth sorting: triangle 중심 z
+        if depth_sorting:
+            tri_depth = V_proj[F][:, :, 2].mean(axis=1)
+            sort_idx = np.argsort(-tri_depth)
+            F = F[sort_idx]
+
+        # make triangle
+        triang = tri.Triangulation(V_proj[:, 0], V_proj[:, 1], F)
+        
+        vertex_color = shading[..., np.newaxis].repeat(3, axis=-1)
+        vertex_color = vertex_color *0.6 + 0.3
+        
+        if is_diff:
+            Sc = plt.get_cmap("YlOrRd")(C)[...,:3] ## [N, 4]
+            mask = C[:,np.newaxis]
+            vertex_color = vertex_color*(1-mask) + Sc*mask
+            
+        else:
+            if C != None:
+                len_seg = C.shape[-1]
+                S = softmax(C) # softmax
+                S = S.argmax(-1)#.numpy()#.float()
+
+                # only render triangle that matches the segment label!
+                if seg_only > 0:
+                    SF = S[F]
+
+                    v_mask = (S == seg_only).any(-1)
+                    vertex_color = vertex_color[v_mask][0]
+                    S = S[v_mask][0]
+
+                    f_mask = (SF == seg_only).any(-1)
+                    F_sorted_masked = F[f_mask]
+                    triang = tri.Triangulation(V_proj[:, 0], V_proj[:, 1], F_sorted_masked)
+
+                S = S.astype(float)
+                Sc = plt.get_cmap(c_map)(S/len_seg)[...,:3]
+
+                vertex_color = vertex_color*(1-blend) + blend*Sc
+                vertex_color = np.clip(vertex_color, 0, 1)
+        
+        cmap = colors_to_cmap(vertex_color)
+        zs = np.linspace(0.0, 1.0, num=V.shape[0])
+        
+        # Gouraud shading
+        plt.tripcolor(triang, zs, cmap=cmap, shading='gouraud')
+        
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    if save:
+        plt.savefig(f'{logdir}/{name}.png', bbox_inches='tight')
+    
+    if show:
+        plt.show()
+    plt.close()
