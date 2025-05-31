@@ -891,7 +891,10 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             vertex_color = vertex_color*(1-mask) + Sc*mask
             
         else:
-            if C != None:
+            if type(C)==torch.tensor:
+                C=C.numpy()
+                
+            if C.any() != None:
                 len_seg = C.shape[-1]
                 S = softmax(C) # softmax
                 S = S.argmax(-1)#.numpy()#.float()
