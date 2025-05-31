@@ -155,13 +155,13 @@ def colors_to_cmap(colors):
 
     Example:
       cmap = colors_to_cmap(colors)
-      zs = np.asarray(range(len(colors)), dtype=np.float) / (len(colors)-1)
+      zs = np.asarray(range(len(colors)), dtype=float) / (len(colors)-1)
       # cmap(zs) should reproduce colors; cmap[zs[i]] == colors[i]
     '''
     colors = np.asarray(colors)
     if colors.shape[1] == 3:
         colors = np.hstack((colors, np.ones((len(colors),1))))
-    steps = (0.5 + np.asarray(range(len(colors)-1), dtype=np.float))/(len(colors) - 1)
+    steps = (0.5 + np.asarray(range(len(colors)-1), dtype=float))/(len(colors) - 1)
     return matclrs.LinearSegmentedColormap(
         'auto_cmap',
         {clrname: ([(0, col[0], col[0])] + 
