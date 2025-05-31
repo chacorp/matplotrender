@@ -12,6 +12,7 @@ from functools import partial
 from tqdm import tqdm
 
 from typing import Callable, List, Optional, Union
+from types import NoneType
 
 import subprocess
 
@@ -891,10 +892,10 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             vertex_color = vertex_color*(1-mask) + Sc*mask
             
         else:
-            if type(C)==torch.tensor:
-                C=C.numpy()
+            if type(C)!=NoneType:
+                if type(C) == torch.tensor:
+                    C = C.numpy()
                 
-            if C.any() != None:
                 len_seg = C.shape[-1]
                 S = softmax(C) # softmax
                 S = S.argmax(-1)#.numpy()#.float()
