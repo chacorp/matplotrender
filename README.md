@@ -103,7 +103,7 @@ plot_mesh_gouraud(
     rot_list=rot_list,
 )
 ```
-The meshes will be rendered from left to right(mesh0, mesh1)
+The meshes will be rendered from left to right (mesh1, mesh2)
 <img src="demo3.png" />
 
 
