@@ -9,11 +9,12 @@ Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 ## TODOs
 - Image
     - [x] curling based on normal
-    - [ ] rendering mesh difference
-    - [ ] gouraud rendering with `matplotlib.tri`
+    - [x] rendering mesh difference (e.g. MSE ...)
+    - [x] gouraud rendering with `matplotlib.tri`
 - Animation
     - [ ] add slider feature to tour around the animation frames
     - [ ] add feature for comparing difference between two animation
+    - [ ] interactive ui
 
 # Requirements
 ```
