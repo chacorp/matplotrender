@@ -22,6 +22,30 @@ pip install -r requirements.txt
 pip install .
 ```
 
+# NEW!
+render with gouraud shading! \
+also supports visualizing difference/error
+```python
+from matplotrender import *
+import trimesh
+
+mesh0 = trimesh.load('your_mesh_file0.obj')
+mesh1 = trimesh.load('your_mesh_file1.obj')
+
+v_list = [mesh1.vertices, mesh2.vertices]
+f_list = [mesh1.faces, mesh2.faces]
+rot_list=[[0,0,0] ,  [0,0,0]] # you can control rotation for individual mesh
+
+plot_mesh_gouraud(
+    v_list, 
+    f_list, 
+    is_diff=True, 
+    diff_base=mesh2.vertices, # calculates difference based on this mesh
+    rot_list=rot_list,
+)
+```
+The meshes will be rendered from left to right (mesh1, mesh2)
+<img src="demo3.png" />
 
 # How to use
 ```python
@@ -81,30 +105,6 @@ plot_mesh_video(
     )
 ```
 
-### NEW!
-render with gouraud shading! \
-also supports visualizing difference/error
-```python
-from matplotrender import *
-import trimesh
-
-mesh0 = trimesh.load('your_mesh_file0.obj')
-mesh1 = trimesh.load('your_mesh_file1.obj')
-
-v_list = [mesh1.vertices, mesh2.vertices]
-f_list = [mesh1.faces, mesh2.faces]
-rot_list=[[0,0,0] ,  [0,0,0]] # you can control rotation for individual mesh
-
-plot_mesh_gouraud(
-    v_list, 
-    f_list, 
-    is_diff=True, 
-    diff_base=mesh2.v, # calculates difference based on this mesh
-    rot_list=rot_list,
-)
-```
-The meshes will be rendered from left to right (mesh1, mesh2)
-<img src="demo3.png" />
 
 
 ## Rendering difference (errors)
