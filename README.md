@@ -41,7 +41,7 @@ f_list=[ mesh.faces ]
 # xyz Euler angle to rotate the mesh
 rot_list=[ [0,0,0] ]
 
-plot_mesh_image(v_list, f_list, rot_list=rot_list, size=SIZE)
+plot_mesh_image(v_list, f_list, rot_list=rot_list, size=SIZE, mode='mesh') # default
 plot_mesh_image(v_list, f_list, rot_list=rot_list, size=SIZE, mode='normal')
 plot_mesh_image(v_list, f_list, rot_list=rot_list, size=SIZE, mode='shade')
 ```
