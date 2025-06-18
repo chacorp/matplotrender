@@ -159,7 +159,7 @@ def colors_to_cmap(colors):
 
     Example:
       cmap = colors_to_cmap(colors)
-      zs = np.asarray(range(len(colors)), dtype=np.float) / (len(colors)-1)
+      zs = np.asarray(range(len(colors)), dtype=float) / (len(colors)-1)
       # cmap(zs) should reproduce colors; cmap[zs[i]] == colors[i]
     '''
     colors = np.asarray(colors)
