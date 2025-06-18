@@ -12,6 +12,10 @@ from functools import partial
 from tqdm import tqdm
 
 from typing import Callable, List, Optional, Union
+try:
+    from types import NoneType
+except:
+    NoneType = type(None)
 
 import subprocess
 
@@ -161,7 +165,7 @@ def colors_to_cmap(colors):
     colors = np.asarray(colors)
     if colors.shape[1] == 3:
         colors = np.hstack((colors, np.ones((len(colors),1))))
-    steps = (0.5 + np.asarray(range(len(colors)-1), dtype=np.float))/(len(colors) - 1)
+    steps = (0.5 + np.asarray(range(len(colors)-1), dtype=float))/(len(colors) - 1)
     return matclrs.LinearSegmentedColormap(
         'auto_cmap',
         {clrname: ([(0, col[0], col[0])] + 
@@ -798,6 +802,7 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
                          threshold=0.01,
                          seg_divide=False,
                          is_diff=False,
+                         is_color=False,
                          diff_base=None,
                          diff_revert=False,
                          backface_culling=False,
@@ -826,6 +831,14 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
     
     # light source data type int -> float
     light_dir_view = light_dir.astype(float)
+
+    if is_diff:
+        #C = np.linalg.norm(abs(C), axis=-1)
+        C = np.linalg.norm(abs(np.array(Vs)-diff_base), axis=-1)
+        # C = C / np.linalg.norm(C, axis=-1, keepdims=True) +1e-8
+        # C = np.linalg.norm(C, axis=0, keepdims=True)
+        C = (C - C.min()) / (C.max() - C.min()) #+1e-8
+        C_diff = 1 - C if diff_revert else C
             
     for idx, (V, F, C) in enumerate(zip(Vs, Fs, Cs)):
                 
@@ -833,11 +846,11 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             V = normalize(V)
             
         if is_diff:
-            C = np.linalg.norm(np.square(V-diff_base), axis=-1)
-            if C.max() > 0:
-                C = (C - C.min(0)) / (C.max(0) - C.min(0))
-            C = 1 - C if diff_revert else C
-            print(C.shape, C.max(0), C.min(0))
+            C = C_diff[idx]
+        #     #C = np.linalg.norm(abs(C), axis=-1)
+        #     C = np.linalg.norm(abs(V-diff_base), axis=-1)
+        #     C = (C - C.min(0)) / (C.max(0) - C.min(0))
+        #     C = 1 - C if diff_revert else C
             
         # scale and translate for render
         V = V * mesh_scale + mesh_trans
@@ -889,9 +902,13 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             Sc = plt.get_cmap("YlOrRd")(C)[...,:3] ## [N, 4]
             mask = C[:,np.newaxis]
             vertex_color = vertex_color*(1-mask) + Sc*mask
-            
+        elif is_color:
+            vertex_color = C
         else:
-            if C != None:
+            if type(C)!=NoneType:
+                if type(C) == torch.tensor:
+                    C = C.numpy()
+                
                 len_seg = C.shape[-1]
                 S = softmax(C) # softmax
                 S = S.argmax(-1)#.numpy()#.float()
@@ -922,6 +939,8 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         
         ax.set_xticks([])
         ax.set_yticks([])
+        if is_diff:
+            ax.set_title(f'mean: {C.mean():.2e} | std: {C.std():.2e}')
 
     if save:
         plt.savefig(f'{logdir}/{name}.png', bbox_inches='tight')
