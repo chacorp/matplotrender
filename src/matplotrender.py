@@ -877,12 +877,6 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             keep = (face_normals_view @ view_dir) >= 0
             F = F[keep]
         
-        # light sticked to front face
-        if mode=='shade':
-            if light_at_frontface:
-                shading = np.clip(vertex_normals_obj @ light_dir_view, 0, 1)
-            else:
-                shading = np.clip(vertex_normals_view @ light_dir_view, 0, 1)
         
         ## projection!
         V_proj = transform(V, MVP)
@@ -896,8 +890,17 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         # make triangle
         triang = tri.Triangulation(V_proj[:, 0], V_proj[:, 1], F)
         
-        vertex_color = shading[..., np.newaxis].repeat(3, axis=-1)
-        vertex_color = vertex_color *0.6 + 0.3
+        # light sticked to front face
+        if mode=='shade':
+            if light_at_frontface:
+                shading = np.clip(vertex_normals_obj @ light_dir_view, 0, 1)
+            else:
+                shading = np.clip(vertex_normals_view @ light_dir_view, 0, 1)
+                
+            vertex_color = shading[..., np.newaxis].repeat(3, axis=-1)
+            vertex_color = vertex_color *0.6 + 0.3
+        else:
+            vertex_color = vertex_normals_view*0.5+0.5
         
         if is_diff:
             Sc = plt.get_cmap("YlOrRd")(C)[...,:3] ## [N, 4]
