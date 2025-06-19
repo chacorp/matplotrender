@@ -878,10 +878,11 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             F = F[keep]
         
         # light sticked to front face
-        if light_at_frontface:
-            shading = np.clip(vertex_normals_obj @ light_dir_view, 0, 1)
-        else:
-            shading = np.clip(vertex_normals_view @ light_dir_view, 0, 1)
+        if mode=='shade':
+            if light_at_frontface:
+                shading = np.clip(vertex_normals_obj @ light_dir_view, 0, 1)
+            else:
+                shading = np.clip(vertex_normals_view @ light_dir_view, 0, 1)
         
         ## projection!
         V_proj = transform(V, MVP)
