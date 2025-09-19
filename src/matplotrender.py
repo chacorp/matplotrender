@@ -815,6 +815,8 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
                          mesh_trans=np.array([0,0,0]),
                          c_map="nipy_spectral", blend=0.5,
                          seg_only=-1,
+                         orth_view=True,
+                         fovy=55,
                          bg_black=True, logdir='.', name='000', save=False, show=True):
 
     num_meshes = len(Vs)
@@ -861,7 +863,7 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         xrot, yrot, zrot = rot_list[idx] if rot_list else (0, 0, 0)
         # very naiiiiiive rotation stacks 
         model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
-        proj = ortho(-1, 1, -1, 1, 1, 100)
+        proj = ortho(-1, 1, -1, 1, 1, 100) if orth_view else perspective(fovy, 1, 1, 100)
         MVP = proj @ model
 
         model_rot = model[:3, :3]
