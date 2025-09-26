@@ -7,6 +7,7 @@ Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 
 
 ## TODOs
+- Clean up duplicated codes..!!!
 - Image
     - [x] curling based on normal
     - [x] rendering mesh difference (e.g. MSE ...)
