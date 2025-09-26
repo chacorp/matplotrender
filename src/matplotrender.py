@@ -868,8 +868,7 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
 
         model_rot = model[:3, :3]
         model_rot_invT = np.linalg.inv(model_rot).T
-
-        # 정점 normal
+        
         vertex_normals_obj = calc_face_norm(V, F, mode='v')
         vertex_normals_view = (model_rot_invT @ vertex_normals_obj.T).T
         
@@ -879,16 +878,15 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             keep = (face_normals_view @ view_dir) >= 0
             F = F[keep]
         
-        
         ## projection!
-        V_proj = transform(V, MVP)
+        V_view = transform(V, model)
+        V_proj = transform(V_view, proj)
 
-        # depth sorting: triangle 중심 z
         if depth_sorting:
-            tri_depth = V_proj[F][:, :, 2].mean(axis=1)
-            sort_idx = np.argsort(-tri_depth)
+            tri_depth = V_view[:, 2][F].mean(axis=1)
+            sort_idx = np.argsort(tri_depth)
             F = F[sort_idx]
-
+            
         # make triangle
         triang = tri.Triangulation(V_proj[:, 0], V_proj[:, 1], F)
         
