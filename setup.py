@@ -20,7 +20,7 @@ setup_kwargs = {
     'url': 'https://github.com/chacorp/matplotrender',
     'package_dir':{"": "src"},
     'install_requires': install_requires,
-    'python_requires': '>=3.8,<4.0',
+    'python_requires': '>=3.7.8,<4.0',
     'classifiers': [
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
