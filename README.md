@@ -12,6 +12,7 @@ Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
     - [x] curling based on normal
     - [x] rendering mesh difference (e.g. MSE ...)
     - [x] gouraud rendering with `matplotlib.tri`
+    - [ ] There is some mistake in depth sorting triangles
 - Animation
     - [ ] add slider feature to tour around the animation frames
     - [ ] add feature for comparing difference between two animation
