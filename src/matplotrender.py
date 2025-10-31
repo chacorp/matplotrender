@@ -818,15 +818,25 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
                          orth_view=True,
                          fovy=55,
                          bg_black=True, logdir='.', name='000', save=False, show=True):
-
+    """
+    Args:
+        Vs (list(np.ndarray)): list of mesh vertices
+        Fs (list(np.ndarray)): list of mesh triangles (quad not supported sorry!)
+        Cs (list(np.ndarray)): list of mesh vertex colors
+    
+    Vs=[ mesh_base.vertices, mesh1.vertices, mesh2.vertices ]
+    Fs=[ mesh_base.faces,    mesh1.faces,    mesh2.faces ]
+    
+    plot_mesh_gouraud(Vs, Fs, rot_list=[[0,-10,0]]*len(Vs))
+    """
     num_meshes = len(Vs)
     
     plt.style.use('dark_background' if bg_black else 'default')
+    
     fig = plt.figure(figsize=(size * num_meshes, size))
     
-    if is_diff:
-        if diff_base is None:
-            raise ValueError('diff_base is None!')
+    if is_diff and diff_base is None:
+        raise ValueError('diff_base is None!')
             
     if Cs==None:
         Cs = [None] * num_meshes
@@ -864,7 +874,7 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         # very naiiiiiive rotation stacks 
         model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
         proj = ortho(-1, 1, -1, 1, 1, 100) if orth_view else perspective(fovy, 1, 1, 100)
-        MVP = proj @ model
+        #MVP = proj @ model
 
         model_rot = model[:3, :3]
         model_rot_invT = np.linalg.inv(model_rot).T
@@ -879,7 +889,8 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
             F = F[keep]
         
         ## projection!
-        V_view = transform(V, model)
+        V_mu = np.median(V, axis=0)
+        V_view = transform(V-V_mu, model)+V_mu
         V_proj = transform(V_view, proj)
 
         if depth_sorting:
@@ -951,4 +962,4 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
     
     if show:
         plt.show()
-    plt.close()
+    plt.close(plt.gcf())
