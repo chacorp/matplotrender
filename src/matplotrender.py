@@ -12,10 +12,6 @@ from functools import partial
 from tqdm import tqdm
 
 from typing import Callable, List, Optional, Union
-try:
-    from types import NoneType
-except:
-    NoneType = type(None)
 
 import subprocess
 
@@ -272,19 +268,8 @@ def plot_mesh_image(
         ax_pos = [idx / num_meshes, 0, 1 / num_meshes, 1]
         ax = fig.add_axes(ax_pos, xlim=[-1, +1], ylim=[-1, +1], aspect=1, frameon=False)
 
-        if rot_list:
-            rot_mat = get_rotation_matrix(rot_list[idx])
-        else:
-            rot_mat = get_rotation_matrix([0, 0, 0])
-
-        ## MVP
-        model = translate(0, 0, z_pos) @ rot_mat
-        if custom_perspective is None:    
-            # proj = perspective(55, 1, 1, 100)
-            proj = ortho(-1, 1, -1, 1, 1, 100)
-        else:
-            proj = custom_perspective
-        MVP = proj @ model # view is identity
+        rot_mat = _get_rot_mat(rot_list, idx)
+        model, _, MVP = _build_mvp(rot_mat, z_pos=z_pos, custom_perspective=custom_perspective)
         
         # quad to triangle    
         VF_tri = transform_vertices(V, MVP, F, norm)
@@ -351,12 +336,7 @@ def plot_mesh_image(
         plt.xticks([])
         plt.yticks([])
     
-    if save:
-        plt.savefig('{}/{}.png'.format(savedir, name), bbox_inches = 'tight')
-        plt.close()
-    else:
-        plt.show()
-        plt.close()
+    _save_or_show(save, f'{savedir}/{name}.png', show=not save)
 
 def setup_plot(bg_black, size, num_meshes):
     if bg_black:
@@ -389,6 +369,67 @@ def prepare_color(C, model, light_dir):
     #C = C * 0.6 + 0.3
     return C
 
+def _get_rot_mat(rot_list, idx):
+    rot = rot_list[idx] if rot_list else [0, 0, 0]
+    return get_rotation_matrix(rot)
+
+def _build_mvp(rot_mat, z_pos=-5, custom_perspective=None, orth_view=True, fovy=55):
+    model = translate(0, 0, z_pos) @ rot_mat
+    if custom_perspective is not None:
+        proj = custom_perspective
+    elif orth_view:
+        proj = ortho(-1, 1, -1, 1, 1, 100)
+    else:
+        proj = perspective(fovy, 1, 1, 100)
+    MVP = proj @ model
+    return model, proj, MVP
+
+def _reset_axes(axes, xlim=(-1.5, 1.5), ylim=(-1.5, 1.5)):
+    for ax in axes:
+        ax.clear()
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+def _save_or_show(save, savepath=None, show=True):
+    if save and savepath:
+        plt.savefig(savepath, bbox_inches='tight')
+    if show:
+        plt.show()
+    plt.close()
+
+def _save_animation(anim, path, fps, num_frames):
+    bar = tqdm(total=num_frames, desc="rendering")
+    anim.save(path, fps=fps, progress_callback=lambda i, n: bar.update(1))
+
+def _to_numpy(x):
+    if x is None:
+        return None
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
+
+def _compute_face_diff(src_v, src_f, anc_v):
+    """Per-face mean L2 distance between src and anc vertices.
+    Same vertex count → direct subtraction.
+    Different count   → nearest-neighbour per src vertex.
+    """
+    if src_v.shape[0] == anc_v.shape[0]:
+        vert_dist = np.linalg.norm(src_v - anc_v, axis=-1)
+    else:
+        # (V_src, V_anc, 3) — fine for meshes up to ~10k verts
+        vert_dist = np.linalg.norm(
+            src_v[:, np.newaxis, :] - anc_v[np.newaxis, :, :], axis=-1
+        ).min(axis=1)
+    return vert_dist[src_f].mean(axis=1)
+
+def _mux_audio(audio_fn, tmp_path, out_path):
+    print("[INFO] mux audio and video")
+    cmd = f"ffmpeg -y -i {audio_fn} -i {tmp_path} -c:v copy -c:a aac {out_path}"
+    subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    subprocess.call(f"rm -f {tmp_path}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
 def process_mesh(V, F, MVP, norm, model, light_dir, linewidth, c_map, diff=None):
     T, Z = transform_and_project(V, F, MVP, norm)
     C = calc_face_norm(V, F)
@@ -410,25 +451,13 @@ def process_mesh(V, F, MVP, norm, model, light_dir, linewidth, c_map, diff=None)
     return T, C
 
 def update_frame_diff(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list):
-    for ax in axes:
-        ax.clear()
-        ax.set_xlim(-1.5, 1.5)
-        ax.set_ylim(-1.5, 1.5)
-        ax.set_aspect('equal')
-        ax.axis('off')
-    
+    _reset_axes(axes)
+
     V = D[frame_idx]
     F = Fs[0]
-    
-    if rot_list:
-        rot_mat = get_rotation_matrix(rot_list[frame_idx])
-    else:
-        rot_mat = get_rotation_matrix([0, 0, 0])
-    
-    model = translate(0, 0, -5) @ rot_mat
-    # proj  = perspective(65, 1, 1, 10)
-    proj = ortho(-1, 1, -1, 1, 1, 100)
-    MVP = proj @ model
+
+    rot_mat = _get_rot_mat(rot_list, frame_idx)
+    model, _, MVP = _build_mvp(rot_mat)
     
     # Plot the GT mesh
     T, C = process_mesh(V, F, MVP, norm, model, light_dir, linewidth, c_map)
@@ -461,23 +490,12 @@ def update_frame_diff(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_
     #fig.text(0.5, 0.01, f'min: {diff_min:.4f} | max: {diff_max:.4f}', ha='center', fontsize=12, transform=fig.transFigure)
 
 def update_frame(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list):
-    for ax in axes:
-        ax.clear()
-        ax.set_xlim(-1.5, 1.5)
-        ax.set_ylim(-1.5, 1.5)
-        ax.set_aspect('equal')
-        ax.axis('off')
-    
+    _reset_axes(axes)
+
     F = Fs[0]
-    
-    if rot_list:
-        rot_mat = get_rotation_matrix(rot_list[frame_idx])
-    else:
-        rot_mat = get_rotation_matrix([0, 0, 0])
-    
-    model = translate(0, 0, -5) @ rot_mat
-    proj = ortho(-1, 1, -1, 1, 1, 100)
-    MVP = proj @ model
+
+    rot_mat = _get_rot_mat(rot_list, frame_idx)
+    model, _, MVP = _build_mvp(rot_mat)
     
     for idx, V in enumerate(Vs):
         T, C = process_mesh(V[frame_idx], F, MVP, norm, model, light_dir, linewidth, c_map)
@@ -485,6 +503,35 @@ def update_frame(frame_idx, Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, 
         axes[idx].add_collection(collection)
         axes[idx].set_title(f'Frame {frame_idx + 1:03d} * 1e-2', fontsize=6)
         axes[idx].axis('off')
+
+def _update_frame_diffs(frame_idx, src_vs, src_fs, anc_vs, anc_f,
+                        axes, linewidth, c_map, norm, light_dir,
+                        threshold, rot_list, diff_max):
+    _reset_axes(axes)
+
+    anc_v  = anc_vs[frame_idx]
+    rot_mat = _get_rot_mat(rot_list, frame_idx)
+    model, _, MVP = _build_mvp(rot_mat)
+
+    # left panel: anchor mesh (plain shading)
+    T_tri, C = process_mesh(anc_v, anc_f, MVP, norm, model, light_dir, linewidth, c_map)
+    axes[0].add_collection(PolyCollection(T_tri, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C))
+    axes[0].set_title(f'anchor | Frame {frame_idx + 1:03d}', fontsize=6)
+    axes[0].axis('off')
+
+    # right panels: each src mesh colored by diff
+    for idx, (src_v_seq, src_f) in enumerate(zip(src_vs, src_fs)):
+        src_v = src_v_seq[frame_idx]
+        diff  = _compute_face_diff(src_v, src_f, anc_v)
+
+        if threshold is not None:
+            diff = np.clip(diff, 0, threshold)
+        diff_norm = np.clip(diff / (diff_max + 1e-12), 0, 1)
+
+        T_tri, C = process_mesh(src_v, src_f, MVP, norm, model, light_dir, linewidth, c_map, diff_norm)
+        axes[idx + 1].add_collection(PolyCollection(T_tri, closed=False, linewidth=linewidth, facecolor=C, edgecolor=C))
+        axes[idx + 1].set_title(f'mean: {diff.mean():.2e} | max: {diff.max():.2e}', fontsize=6)
+        axes[idx + 1].axis('off')
 
 def plot_mesh_video(
         Vs, 
@@ -543,22 +590,12 @@ def plot_mesh_video(
     
     anim_name = f'{savedir}/{savename}.mp4'
 
-    bar = tqdm(total=num_frames, desc="rendering")
-    anim.save(
-        anim_name if audio_dir is None else 'tmp.mp4', 
-        fps=fps,
-        progress_callback=lambda i, n: bar.update(1)
-    )
+    tmp_path = 'tmp.mp4' if audio_dir is not None else anim_name
+    _save_animation(anim, tmp_path, fps, num_frames)
     plt.close()
-    
+
     if audio_dir is not None:
-        # mux audio and video
-        print("[INFO] mux audio and video")
-        cmd = f"ffmpeg -y -i {audio_dir} -i tmp.mp4 -c:v copy -c:a aac {anim_name}"
-        subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        
-        # remove tmp files
-        subprocess.call(f"rm -f tmp.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        _mux_audio(audio_dir, tmp_path, anim_name)
 
     print(f"saved as: {anim_name}")
 
@@ -670,12 +707,8 @@ def plot_image_array_diff3(
     num_meshes = len(Vs) + 1
     fig, axes = setup_plot(bg_black, size, num_meshes)
     
-    xrot, yrot, zrot = rot if rot is not None else (0, 0, 0)
-    
-    model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
-    proj = ortho(-1, 1, -1, 1, 1, 100)
-    # proj  = perspective(65, 1, 1, 10)
-    MVP = proj @ model
+    rot_mat = get_rotation_matrix(rot if rot is not None else [0, 0, 0])
+    model, _, MVP = _build_mvp(rot_mat)
 
     if draw_base:
         T, C = process_mesh(D, Fs[0], MVP, norm, model, light_dir, linewidth, c_map)
@@ -709,27 +742,25 @@ def plot_image_array_diff3(
     cbar = fig.colorbar(sm, ax=axes, orientation='vertical', fraction=0.006, pad=0.015)
     cbar.set_label('Mean Squared Error', rotation=90, labelpad=15)
     
-    if save:
-        plt.savefig(f'{logdir}/{name}.png', bbox_inches='tight')
-        plt.close()
-    else:
-        plt.show()
-        plt.close()
+    _save_or_show(save, f'{logdir}/{name}.png', show=not save)
 
-def render_video_mesh_diff(Vs, Fs, D, 
-                    rot_list=None,
-                    size=6,
-                    norm=False,
-                    linewidth=1,
-                    light_dir=np.array([0,0,1]),
-                    bg_black=True,
-                    threshold=None,
-                    c_map='YlOrRd', 
-                    savedir=None, 
-                    savename="temp",
-                    audio_fn=None,
-                    fps=30
-                    ):
+def render_video_mesh_diff(
+        Vs, 
+        Fs, 
+        D=None, 
+        rot_list=None,
+        size=6,
+        norm=False,
+        linewidth=1,
+        light_dir=np.array([0,0,1]),
+        bg_black=True,
+        threshold=None,
+        c_map='YlOrRd', 
+        savedir=None, 
+        savename="temp",
+        audio_fn=None,
+        fps=30
+    ):
     """
     ex):
     v_list=[ pred_outputs[:frame_num], vertices.numpy()[:frame_num] ]
@@ -744,6 +775,9 @@ def render_video_mesh_diff(Vs, Fs, D,
         savename="temp",
     )
     """
+    if D is None:
+        Vs0 = np.asarray(Vs[0])
+        D = np.repeat(Vs0[[0]], len(Vs0), axis=0)  # first mesh repeated T times
     num_frames = len(D)
     num_meshes = len(Vs) + 1
     fig, axes = setup_plot(bg_black, size, num_meshes)
@@ -752,38 +786,122 @@ def render_video_mesh_diff(Vs, Fs, D,
     plt.tight_layout()
     #fig.subplots_adjust(top=0.95)  # Adjust the top margin to ensure titles are not cut off
     anim = FuncAnimation(
-        fig, update_frame, 
-        frames=num_frames, 
-        fargs=(Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list), 
+        fig, update_frame_diff,
+        frames=num_frames,
+        fargs=(Vs, Fs, D, axes, linewidth, c_map, norm, light_dir, threshold, rot_list),
         repeat=False
     )
     
     if savedir is None:
         plt.show()
     else:
-        if audio_fn is None:
-            anim_name = f'{savedir}/{savename}.mp4'
-        else:
-            anim_name = f'{savedir}/_tmp_.mp4'
-        bar = tqdm(total=num_frames, desc="rendering")
-        anim.save(
-            anim_name, 
-            fps=fps,
-            progress_callback=lambda i, n: bar.update(1)
-        )
-            
+        tmp_path = f'{savedir}/{savename}.mp4' if audio_fn is None else f'{savedir}/_tmp_.mp4'
+        _save_animation(anim, tmp_path, fps, num_frames)
+
     plt.close()
-    
+
     if audio_fn is not None:
-        # mux audio and video
-        print("[INFO] mux audio and video")
-        cmd = f"ffmpeg -y -i {audio_fn} -i {savedir}/_tmp_.mp4 -c:v copy -c:a aac {savedir}/{savename}.mp4"
-        subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        _mux_audio(audio_fn, f'{savedir}/_tmp_.mp4', f'{savedir}/{savename}.mp4')
         print(f"saved as: {savedir}/{savename}.mp4")
 
-        # remove tmp files
-        subprocess.call(f"rm -f {savedir}/_tmp_.mp4", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
+def render_video_mesh_diffs(
+        src_vs,
+        src_fs,
+        anc_vs,
+        anc_fs,
+        rot_list=None,
+        size=6,
+        norm=False,
+        linewidth=1,
+        light_dir=np.array([0, 0, 1]),
+        bg_black=False,
+        threshold=None,
+        c_map='YlOrRd',
+        fps=30,
+        savedir=None,
+        savename='temp',
+        audio_fn=None,
+    ):
+    """
+    Compare src sequences against an anchor sequence frame by frame,
+    visualizing per-face L2 distance as color on each src mesh.
+
+    Layout per frame: [ anchor | src_0 | src_1 | ... ]
+
+    Colormap is normalized globally across all frames so colors are
+    comparable throughout the video.
+
+    Args:
+        src_vs (list of np.ndarray): list of (T, V, 3) source sequences
+        src_fs (list of np.ndarray): list of (F, 3) face arrays for each src
+        anc_vs (np.ndarray): (T, V, 3) anchor sequence
+        anc_fs (np.ndarray): (F, 3) anchor face array
+
+    >>>
+    render_video_mesh_diffs(
+        src_vs=[pred_seq],          # (T, V, 3)
+        src_fs=[faces],
+        anc_vs=gt_seq,              # (T, V, 3)
+        anc_fs=faces,
+        savedir='out', savename='diff_video',
+    )
+    """
+    if not isinstance(src_vs, list):
+        src_vs = [src_vs]
+    if not isinstance(src_fs, list):
+        src_fs = [src_fs]
+
+    src_vs = [np.asarray(v) for v in src_vs]
+    src_fs = [np.asarray(f).astype(int) for f in src_fs]
+    anc_vs = np.asarray(anc_vs)
+    anc_f  = np.asarray(anc_fs).astype(int)
+
+    num_frames = len(anc_vs)
+    num_meshes = len(src_vs) + 1
+
+    # pre-compute global diff_max for consistent colormap across all frames
+    # print("Computing global diff range...")
+    all_diffs = [
+        _compute_face_diff(src_v_seq[t], src_f, anc_vs[t])
+        for t in range(num_frames)
+        for src_v_seq, src_f in zip(src_vs, src_fs)
+    ]
+    all_diffs_cat = np.concatenate(all_diffs)
+    if threshold is not None:
+        all_diffs_cat = np.clip(all_diffs_cat, 0, threshold)
+    diff_max = float(all_diffs_cat.max())
+
+    fig, axes = setup_plot(bg_black, size, num_meshes)
+    plt.tight_layout()
+
+    # add shared colorbar
+    norm_color = plt.Normalize(vmin=0, vmax=diff_max)
+    sm = plt.cm.ScalarMappable(cmap=c_map, norm=norm_color)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes, orientation='vertical', fraction=0.006, pad=0.015)
+    cbar.set_label('L2 distance', rotation=90, labelpad=15)
+
+    anim = FuncAnimation(
+        fig, _update_frame_diffs,
+        frames=num_frames,
+        fargs=(src_vs, src_fs, anc_vs, anc_f, axes, linewidth, c_map,
+               norm, light_dir, threshold, rot_list, diff_max),
+        repeat=False,
+    )
+
+    if savedir is None:
+        plt.show()
+    else:
+        os.makedirs(savedir, exist_ok=True)
+        tmp_path = f'{savedir}/{savename}.mp4' if audio_fn is None else f'{savedir}/_tmp_.mp4'
+        _save_animation(anim, tmp_path, fps, num_frames)
+
+    plt.close()
+
+    if audio_fn is not None:
+        _mux_audio(audio_fn, f'{savedir}/_tmp_.mp4', f'{savedir}/{savename}.mp4')
+        print(f"saved as: {savedir}/{savename}.mp4")
 
 def softmax(x):
     exp_x = np.exp(x)
@@ -838,43 +956,41 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
     if is_diff and diff_base is None:
         raise ValueError('diff_base is None!')
             
-    if Cs==None:
+    if Cs is None:
         Cs = [None] * num_meshes
-    
-    # light source data type int -> float
-    light_dir_view = light_dir.astype(float)
+
+    # convert shared params to numpy once
+    light_dir_view = _to_numpy(light_dir).astype(float)
+    view_dir_np    = _to_numpy(view_dir)
+    mesh_trans_np  = _to_numpy(mesh_trans)
 
     if is_diff:
-        #C = np.linalg.norm(abs(C), axis=-1)
-        C = np.linalg.norm(abs(np.array(Vs)-diff_base), axis=-1)
-        # C = C / np.linalg.norm(C, axis=-1, keepdims=True) +1e-8
-        # C = np.linalg.norm(C, axis=0, keepdims=True)
-        C = (C - C.min()) / (C.max() - C.min()) #+1e-8
+        Vs_np      = np.array([_to_numpy(v) for v in Vs])
+        diff_base_np = _to_numpy(diff_base)
+        C = np.linalg.norm(abs(Vs_np - diff_base_np), axis=-1)
+        C = (C - C.min()) / (C.max() - C.min())
         C_diff = 1 - C if diff_revert else C
-            
+
     for idx, (V, F, C) in enumerate(zip(Vs, Fs, Cs)):
-                
+        # ensure numpy throughout
+        V = _to_numpy(V)
+        F = _to_numpy(F).astype(int)
+        C = _to_numpy(C)
+
         if norm:
             V = normalize(V)
-            
+
         if is_diff:
             C = C_diff[idx]
-        #     #C = np.linalg.norm(abs(C), axis=-1)
-        #     C = np.linalg.norm(abs(V-diff_base), axis=-1)
-        #     C = (C - C.min(0)) / (C.max(0) - C.min(0))
-        #     C = 1 - C if diff_revert else C
-            
+
         # scale and translate for render
-        V = V * mesh_scale + mesh_trans
+        V = V * mesh_scale + mesh_trans_np
     
         ax_pos = [idx / num_meshes, 0, 1 / num_meshes, 1]
         ax = fig.add_axes(ax_pos, xlim=[-1, 1], ylim=[-1, 1], aspect=1, frameon=False)
 
-        xrot, yrot, zrot = rot_list[idx] if rot_list else (0, 0, 0)
-        # very naiiiiiive rotation stacks 
-        model = translate(0, 0, -5) @ yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
-        proj = ortho(-1, 1, -1, 1, 1, 100) if orth_view else perspective(fovy, 1, 1, 100)
-        #MVP = proj @ model
+        rot_mat = _get_rot_mat(rot_list, idx)
+        model, proj, _ = _build_mvp(rot_mat, orth_view=orth_view, fovy=fovy)
 
         model_rot = model[:3, :3]
         model_rot_invT = np.linalg.inv(model_rot).T
@@ -885,7 +1001,7 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         if backface_culling:
             face_normals_obj = calc_face_norm(V, F)
             face_normals_view = (model_rot_invT @ face_normals_obj.T).T
-            keep = (face_normals_view @ view_dir) >= 0
+            keep = (face_normals_view @ view_dir_np) >= 0
             F = F[keep]
         
         ## projection!
@@ -920,13 +1036,9 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         elif is_color:
             vertex_color = C
         else:
-            if type(C)!=NoneType:
-                if type(C) == torch.tensor:
-                    C = C.numpy()
-                
+            if C is not None:
                 len_seg = C.shape[-1]
-                S = softmax(C) # softmax
-                S = S.argmax(-1)#.numpy()#.float()
+                S = softmax(C).argmax(-1).astype(float)
 
                 # only render triangle that matches the segment label!
                 if seg_only > 0:
@@ -940,7 +1052,6 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
                     F_sorted_masked = F[f_mask]
                     triang = tri.Triangulation(V_proj[:, 0], V_proj[:, 1], F_sorted_masked)
 
-                S = S.astype(float)
                 Sc = plt.get_cmap(c_map)(S/len_seg)[...,:3]
 
                 vertex_color = vertex_color*(1-blend) + blend*Sc
@@ -957,9 +1068,4 @@ def plot_mesh_gouraud(Vs, Fs, Cs=None, rot_list=None, size=6, norm=False,
         if is_diff:
             ax.set_title(f'mean: {C.mean():.2e} | std: {C.std():.2e}')
 
-    if save:
-        plt.savefig(f'{logdir}/{name}.png', bbox_inches='tight')
-    
-    if show:
-        plt.show()
-    plt.close(plt.gcf())
+    _save_or_show(save, f'{logdir}/{name}.png', show=show)
