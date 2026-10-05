@@ -19,6 +19,14 @@ from matplotlib.colors import ListedColormap
 from matplotlib.collections import LineCollection
 from matplotlib.cm import get_cmap
 
+from utils import (
+    xrotate, yrotate, zrotate,
+    get_rotation_matrix,
+    calc_face_norm,
+    fix_triangle_widning,
+    _to_numpy, _compute_face_diff, _mux_audio,
+)
+
 """
 Reference: https://matplotlib.org/matplotblog/posts/custom-3d-engine/
 """
@@ -63,42 +71,6 @@ def translate(x, y, z):
                      [0, 0, 1, z],
                      [0, 0, 0, 1]], dtype=float)
 
-def yrotate(theta):
-    t = np.pi * theta / 180
-    c, s = np.cos(t), np.sin(t)
-    return  np.array([[ c, 0, s, 0],
-                      [ 0, 1, 0, 0],
-                      [-s, 0, c, 0],
-                      [ 0, 0, 0, 1]], dtype=float)
-
-def zrotate(theta):
-    t = np.pi * theta / 180
-    c, s = np.cos(t), np.sin(t)
-    return  np.array([[ c,-s, 0, 0],
-                      [ s, c, 0, 0],
-                      [ 0, 0, 1, 0],
-                      [ 0, 0, 0, 1]], dtype=float)
-
-def xrotate(theta):
-    t = np.pi * theta / 180
-    c, s = np.cos(t), np.sin(t)
-    return  np.array([[ 1, 0, 0, 0],
-                      [ 0, c,-s, 0],
-                      [ 0, s, c, 0],
-                      [ 0, 0, 0, 1]], dtype=float)
-
-def get_rotation_matrix(rotations):
-    """
-    Args:
-        rotations: List[float, float, float]
-            list of x, y, z rotations in euler angle
-    Returns:
-        matrix : np.ndarray
-            4x4 rotation matrix
-    """
-    xrot, yrot, zrot = rotations
-    matrix = yrotate(yrot) @ xrotate(xrot) @ zrotate(zrot)
-    return matrix
 
 def transform_vertices(frame_v, MVP, F, norm=True, no_parsing=False):
     V = frame_v
@@ -112,40 +84,6 @@ def transform_vertices(frame_v, MVP, F, norm=True, no_parsing=False):
     VF = V[F]
     return VF
 
-def calc_face_norm(vertices, faces, mode='faces'):
-    """
-    Args
-    -------
-        vertices : np.ndarray
-            vertices
-        faces : np.ndarray
-            face indices
-        mode : str
-            whether to calculate normals on 'faces' or 'vertices'
-        
-    Returns
-    -------
-        norm or norm_v (np.ndarray):
-            normals on 'faces' or 'vertices'
-    """
-
-    fv = vertices[faces]
-    span = fv[:, 1:, :] - fv[:, :1, :]
-    norm = np.cross(span[:, 0, :], span[:, 1, :])
-    norm = norm / (np.linalg.norm(norm, axis=-1)[:, np.newaxis] + 1e-12)
-    
-    if mode=='faces':
-        return norm
-    
-    # Compute mean vertex normals manually
-    vertex_normals = np.zeros(vertices.shape, dtype=np.float64)
-    for i, face in enumerate(faces):
-        for vertex in face:
-            vertex_normals[vertex] += norm[i]
-
-    # Normalize the vertex normals
-    norm_v = vertex_normals / (np.linalg.norm(vertex_normals, axis=1)[:, np.newaxis] + 1e-12)
-    return norm_v
 
 def colors_to_cmap(colors):
     '''
@@ -264,6 +202,8 @@ def plot_mesh_image(
     fig = plt.figure(figsize=(size * num_meshes, size))  # Adjust figure size based on the number of meshes
     
     for idx, (V, F) in enumerate(zip(Vs, Fs)):
+        F = fix_triangle_widning(V, F)
+
         # Calculate the position of the subplot for the current mesh
         ax_pos = [idx / num_meshes, 0, 1 / num_meshes, 1]
         ax = fig.add_axes(ax_pos, xlim=[-1, +1], ylim=[-1, +1], aspect=1, frameon=False)
@@ -403,34 +343,9 @@ def _save_animation(anim, path, fps, num_frames):
     bar = tqdm(total=num_frames, desc="rendering")
     anim.save(path, fps=fps, progress_callback=lambda i, n: bar.update(1))
 
-def _to_numpy(x):
-    if x is None:
-        return None
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy()
-    return np.asarray(x)
-
-def _compute_face_diff(src_v, src_f, anc_v):
-    """Per-face mean L2 distance between src and anc vertices.
-    Same vertex count → direct subtraction.
-    Different count   → nearest-neighbour per src vertex.
-    """
-    if src_v.shape[0] == anc_v.shape[0]:
-        vert_dist = np.linalg.norm(src_v - anc_v, axis=-1)
-    else:
-        # (V_src, V_anc, 3) — fine for meshes up to ~10k verts
-        vert_dist = np.linalg.norm(
-            src_v[:, np.newaxis, :] - anc_v[np.newaxis, :, :], axis=-1
-        ).min(axis=1)
-    return vert_dist[src_f].mean(axis=1)
-
-def _mux_audio(audio_fn, tmp_path, out_path):
-    print("[INFO] mux audio and video")
-    cmd = f"ffmpeg -y -i {audio_fn} -i {tmp_path} -c:v copy -c:a aac {out_path}"
-    subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    subprocess.call(f"rm -f {tmp_path}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 def process_mesh(V, F, MVP, norm, model, light_dir, linewidth, c_map, diff=None):
+    F = fix_triangle_widning(V, F)
     T, Z = transform_and_project(V, F, MVP, norm)
     C = calc_face_norm(V, F)
     C = prepare_color(C, model, light_dir)
