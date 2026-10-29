@@ -19,7 +19,7 @@ from matplotlib.colors import ListedColormap
 from matplotlib.collections import LineCollection
 from matplotlib.cm import get_cmap
 
-from utils import (
+from .utils import (
     xrotate, yrotate, zrotate,
     get_rotation_matrix,
     calc_face_norm,

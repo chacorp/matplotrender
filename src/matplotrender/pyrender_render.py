@@ -1,5 +1,5 @@
 """
-pyrender-based mesh rendering — same public API as matplotrender.py.
+pyrender-based mesh rendering — same public API as matplotrender.core.
 
 For headless (off-screen) rendering, set this BEFORE importing:
 
@@ -9,7 +9,7 @@ For headless (off-screen) rendering, set this BEFORE importing:
 
 On Windows with a display attached, no variable is needed.
 
-Public functions (same signatures as matplotrender.py):
+Public functions (same signatures as matplotrender.core):
     plot_mesh_image
     plot_mesh_video
     plot_image_array_diff3
@@ -19,93 +19,20 @@ Public functions (same signatures as matplotrender.py):
 """
 
 import os
-import sys as _sys
-import importlib.util as _ilu
-import sysconfig as _sc
 import numpy as np
 import trimesh
-
-# This file is named pyrender.py, which conflicts with the installed pyrender package.
-# Load the real package directly from site-packages to avoid the name collision.
-def _load_real_pyrender():
-    site = _sc.get_paths()['purelib']
-    pkg_dir = os.path.join(site, 'pyrender')
-    init = os.path.join(pkg_dir, '__init__.py')
-    if not os.path.exists(init):
-        raise ImportError(f"pyrender package not found at {init}. Run: pip install pyrender")
-    spec = _ilu.spec_from_file_location(
-        'pyrender', init,
-        submodule_search_locations=[pkg_dir])
-    mod = _ilu.module_from_spec(spec)
-    mod.__path__ = [pkg_dir]
-    mod.__package__ = 'pyrender'
-    _sys.modules['pyrender'] = mod   # must be set BEFORE exec so relative imports resolve
-    spec.loader.exec_module(mod)
-    return mod
-
-_pyrender = _load_real_pyrender()
-del _load_real_pyrender
+import pyrender as _pyrender
 
 import imageio
 from PIL import Image
 from tqdm import tqdm
 from typing import List, Optional, Union
-import subprocess
-import torch
 
-
-# ── math helpers (shared with matplotrender) ──────────────────────────────────
-
-def _xrotate(theta):
-    t = np.pi * theta / 180; c, s = np.cos(t), np.sin(t)
-    return np.array([[1,0,0,0],[0,c,-s,0],[0,s,c,0],[0,0,0,1]], dtype=float)
-
-def _yrotate(theta):
-    t = np.pi * theta / 180; c, s = np.cos(t), np.sin(t)
-    return np.array([[c,0,s,0],[0,1,0,0],[-s,0,c,0],[0,0,0,1]], dtype=float)
-
-def _zrotate(theta):
-    t = np.pi * theta / 180; c, s = np.cos(t), np.sin(t)
-    return np.array([[c,-s,0,0],[s,c,0,0],[0,0,1,0],[0,0,0,1]], dtype=float)
-
-def get_rotation_matrix(rotations):
-    xrot, yrot, zrot = rotations
-    return _yrotate(yrot) @ _xrotate(xrot) @ _zrotate(zrot)
-
-def calc_face_norm(vertices, faces, mode='faces'):
-    fv = vertices[faces]
-    span = fv[:, 1:, :] - fv[:, :1, :]
-    norm = np.cross(span[:, 0, :], span[:, 1, :])
-    norm = norm / (np.linalg.norm(norm, axis=-1)[:, np.newaxis] + 1e-12)
-    if mode == 'faces':
-        return norm
-    vertex_normals = np.zeros(vertices.shape, dtype=np.float64)
-    np.add.at(vertex_normals, faces[:, 0], norm)
-    np.add.at(vertex_normals, faces[:, 1], norm)
-    np.add.at(vertex_normals, faces[:, 2], norm)
-    return vertex_normals / (np.linalg.norm(vertex_normals, axis=1)[:, np.newaxis] + 1e-12)
-
-def _to_numpy(x):
-    if x is None:
-        return None
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy()
-    return np.asarray(x)
-
-def _compute_face_diff(src_v, src_f, anc_v):
-    if src_v.shape[0] == anc_v.shape[0]:
-        vert_dist = np.linalg.norm(src_v - anc_v, axis=-1)
-    else:
-        vert_dist = np.linalg.norm(
-            src_v[:, np.newaxis, :] - anc_v[np.newaxis, :, :], axis=-1
-        ).min(axis=1)
-    return vert_dist[src_f].mean(axis=1)
-
-def _mux_audio(audio_fn, tmp_path, out_path):
-    print("[INFO] mux audio and video")
-    cmd = f"ffmpeg -y -i {audio_fn} -i {tmp_path} -c:v copy -c:a aac {out_path}"
-    subprocess.call(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    subprocess.call(f"rm -f {tmp_path}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+from .utils import (
+    get_rotation_matrix,
+    calc_face_norm,
+    _to_numpy, _compute_face_diff, _mux_audio,
+)
 
 
 # ── pyrender helpers ──────────────────────────────────────────────────────────
@@ -154,11 +81,14 @@ def _add_mesh_node(scene, V, F, vertex_colors, rot_mat, smooth=True):
     pose[:3, :3] = rot_mat[:3, :3]
     scene.add(mesh, pose=pose)
 
-def _render_scene(scene, width, height, wireframe=False):
-    renderer = _pyrender.OffscreenRenderer(width, height)
+def _render_scene(scene, width, height, wireframe=False, renderer=None):
+    owned = renderer is None
+    if owned:
+        renderer = _pyrender.OffscreenRenderer(width, height)
     flags = _pyrender.RenderFlags.ALL_WIREFRAME if wireframe else _pyrender.RenderFlags.NONE
     color, _ = renderer.render(scene, flags=flags)
-    renderer.delete()
+    if owned:
+        renderer.delete()
     return color  # (H, W, 3) uint8
 
 def _get_rot(rot_list, idx):
@@ -524,41 +454,45 @@ def plot_mesh_video(
     anim_name = f'{savedir}/{savename}.mp4'
     tmp_path = f'{savedir}/_tmp_.mp4' if audio_dir is not None else anim_name
 
+    renderer = _pyrender.OffscreenRenderer(img_size, img_size)
     frames = []
-    for frame_idx in tqdm(range(num_frames), desc="rendering"):
-        rot = _get_rot(rot_list, frame_idx)
-        rot_mat = get_rotation_matrix(rot)
-        panels = []
-
-        if D is not None:
-            # anchor panel
-            V_anc = _normalize_mesh(_to_numpy(D[frame_idx]).astype(float))
-            vc = _vc_shade(V_anc, F, rot_mat, light_dir_np)
-            scene = _build_scene(bg_black)
-            _add_mesh_node(scene, V_anc, F, vc, rot_mat)
-            _add_camera(scene)
-            panels.append(_render_scene(scene, img_size, img_size))
-
-        for v_seq in Vs:
-            V = _normalize_mesh(_to_numpy(v_seq[frame_idx]).astype(float))
+    try:
+        for frame_idx in tqdm(range(num_frames), desc="rendering"):
+            rot = _get_rot(rot_list, frame_idx)
+            rot_mat = get_rotation_matrix(rot)
+            panels = []
 
             if D is not None:
-                V_anc = _to_numpy(D[frame_idx]).astype(float)
-                diff = _compute_face_diff(V, F, _normalize_mesh(V_anc))
-                if threshold is not None:
-                    diff = np.clip(diff, 0, threshold)
-                diff_max = diff.max()
-                diff_norm = diff / (diff_max + 1e-12) if diff_max > 0 else diff
-                vc = _vc_shade_with_diff(V, F, rot_mat, light_dir_np, diff_norm, c_map)
-            else:
-                vc = _vc_shade(V, F, rot_mat, light_dir_np)
+                # anchor panel
+                V_anc = _normalize_mesh(_to_numpy(D[frame_idx]).astype(float))
+                vc = _vc_shade(V_anc, F, rot_mat, light_dir_np)
+                scene = _build_scene(bg_black)
+                _add_mesh_node(scene, V_anc, F, vc, rot_mat)
+                _add_camera(scene)
+                panels.append(_render_scene(scene, img_size, img_size, renderer=renderer))
 
-            scene = _build_scene(bg_black)
-            _add_mesh_node(scene, V, F, vc, rot_mat)
-            _add_camera(scene)
-            panels.append(_render_scene(scene, img_size, img_size))
+            for v_seq in Vs:
+                V = _normalize_mesh(_to_numpy(v_seq[frame_idx]).astype(float))
 
-        frames.append(np.concatenate(panels, axis=1))
+                if D is not None:
+                    V_anc = _to_numpy(D[frame_idx]).astype(float)
+                    diff = _compute_face_diff(V, F, _normalize_mesh(V_anc))
+                    if threshold is not None:
+                        diff = np.clip(diff, 0, threshold)
+                    diff_max = diff.max()
+                    diff_norm = diff / (diff_max + 1e-12) if diff_max > 0 else diff
+                    vc = _vc_shade_with_diff(V, F, rot_mat, light_dir_np, diff_norm, c_map)
+                else:
+                    vc = _vc_shade(V, F, rot_mat, light_dir_np)
+
+                scene = _build_scene(bg_black)
+                _add_mesh_node(scene, V, F, vc, rot_mat)
+                _add_camera(scene)
+                panels.append(_render_scene(scene, img_size, img_size, renderer=renderer))
+
+            frames.append(np.concatenate(panels, axis=1))
+    finally:
+        renderer.delete()
 
     imageio.mimwrite(tmp_path, frames, fps=fps, codec='libx264', quality=8)
     print(f"saved as: {anim_name}")
@@ -672,34 +606,38 @@ def render_video_mesh_diffs(
     anim_name = f'{out_dir}/{savename}.mp4'
     tmp_path = f'{out_dir}/_tmp_.mp4' if audio_fn is not None else anim_name
 
+    renderer = _pyrender.OffscreenRenderer(img_size, img_size)
     frames = []
-    for frame_idx in tqdm(range(num_frames), desc="rendering"):
-        rot = _get_rot(rot_list, frame_idx)
-        rot_mat = get_rotation_matrix(rot)
-        panels = []
+    try:
+        for frame_idx in tqdm(range(num_frames), desc="rendering"):
+            rot = _get_rot(rot_list, frame_idx)
+            rot_mat = get_rotation_matrix(rot)
+            panels = []
 
-        # anchor panel
-        V_anc = _normalize_mesh(anc_vs[frame_idx].astype(float))
-        vc = _vc_shade(V_anc, anc_f, rot_mat, light_dir_np)
-        scene = _build_scene(bg_black)
-        _add_mesh_node(scene, V_anc, anc_f, vc, rot_mat)
-        _add_camera(scene)
-        panels.append(_render_scene(scene, img_size, img_size))
-
-        # src panels
-        for si, (src_v_seq, src_f) in enumerate(zip(src_vs, src_fs)):
-            V_src = _normalize_mesh(src_v_seq[frame_idx].astype(float))
-            diff = _compute_face_diff(src_v_seq[frame_idx], src_f, anc_vs[frame_idx])
-            if threshold is not None:
-                diff = np.clip(diff, 0, threshold)
-            diff_norm = np.clip(diff / (diff_max + 1e-12), 0, 1)
-            vc = _vc_shade_with_diff(V_src, src_f, rot_mat, light_dir_np, diff_norm, c_map)
+            # anchor panel
+            V_anc = _normalize_mesh(anc_vs[frame_idx].astype(float))
+            vc = _vc_shade(V_anc, anc_f, rot_mat, light_dir_np)
             scene = _build_scene(bg_black)
-            _add_mesh_node(scene, V_src, src_f, vc, rot_mat)
+            _add_mesh_node(scene, V_anc, anc_f, vc, rot_mat)
             _add_camera(scene)
-            panels.append(_render_scene(scene, img_size, img_size))
+            panels.append(_render_scene(scene, img_size, img_size, renderer=renderer))
 
-        frames.append(np.concatenate(panels, axis=1))
+            # src panels
+            for si, (src_v_seq, src_f) in enumerate(zip(src_vs, src_fs)):
+                V_src = _normalize_mesh(src_v_seq[frame_idx].astype(float))
+                diff = _compute_face_diff(src_v_seq[frame_idx], src_f, anc_vs[frame_idx])
+                if threshold is not None:
+                    diff = np.clip(diff, 0, threshold)
+                diff_norm = np.clip(diff / (diff_max + 1e-12), 0, 1)
+                vc = _vc_shade_with_diff(V_src, src_f, rot_mat, light_dir_np, diff_norm, c_map)
+                scene = _build_scene(bg_black)
+                _add_mesh_node(scene, V_src, src_f, vc, rot_mat)
+                _add_camera(scene)
+                panels.append(_render_scene(scene, img_size, img_size, renderer=renderer))
+
+            frames.append(np.concatenate(panels, axis=1))
+    finally:
+        renderer.delete()
 
     imageio.mimwrite(tmp_path, frames, fps=fps, codec='libx264', quality=8)
 

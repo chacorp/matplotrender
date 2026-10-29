@@ -1,3 +1,6 @@
 trimesh==4.3.1
 numpy==1.23.0
 matplotlib==3.7.5
+mitsuba
+imageio[ffmpeg]
+pillow

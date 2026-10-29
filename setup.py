@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from setuptools import setup
+from setuptools import setup, find_packages
 
 install_requires = [
  'trimesh',
@@ -10,7 +10,7 @@ install_requires = [
 
 setup_kwargs = {
     'name': 'matplotrender',
-    'version': '0.2.1',
+    'version': '0.2.2',
     'description': 'render 3d mesh using matplotlib',
     'long_description': 'render image and video with 3d mesh using matplotlib',
     'author': 'Sihun Cha',
@@ -19,6 +19,7 @@ setup_kwargs = {
     'maintainer_email': 'None',
     'url': 'https://github.com/chacorp/matplotrender',
     'package_dir':{"": "src"},
+    'packages': find_packages(where="src"),
     'install_requires': install_requires,
     'python_requires': '>=3.7.8,<4.0',
     'classifiers': [
